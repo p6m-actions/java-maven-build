@@ -1,3 +1,8 @@
+dotnet-build
+java-maven-setup
+js-pnpm-build
+python-uv-build
+
 ### IntelliJ IDEA project files ###
 .idea/
 *.iws

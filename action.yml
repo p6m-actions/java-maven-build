@@ -1,36 +1,203 @@
 name: "Java Maven Build"
-description: "A simple GitHub Action that prints a greeting"
-author: "Jimmie Fulton <jimmie.fulton@gmail.com>"
+description: "Builds a Java project using Maven with flexible lint, test, and build commands"
+author: "Jimmie Fulton <jimmie@ybor.ai>"
 
 # Define the inputs for this action
 inputs:
-  who-to-greet:
-    description: "Who to greet"
-    required: true
-    default: "World"
-  message:
-    description: "Custom message to include"
+  # Lint configuration
+  run-lint:
+    description: "Whether to run linting"
     required: false
-    default: "Hello"
+    default: "true"
+  lint-command:
+    description: "Command to run for linting"
+    required: false
+    default: "mvn checkstyle:check"
+  lint-args:
+    description: "Additional arguments for the lint command"
+    required: false
+    default: ""
 
-# Define the outputs for this action
-outputs:
-  time:
-    description: "The time we greeted you"
-    value: ${{ steps.hello.outputs.time }}
+  # Test configuration
+  run-test:
+    description: "Whether to run tests"
+    required: false
+    default: "true"
+  test-command:
+    description: "Command to run for testing"
+    required: false
+    default: "mvn test"
+  test-args:
+    description: "Additional arguments for the test command"
+    required: false
+    default: ""
+
+  # Build configuration
+  run-build:
+    description: "Whether to run build"
+    required: false
+    default: "true"
+  build-command:
+    description: "Command to run for building"
+    required: false
+    default: "mvn compile"
+  build-args:
+    description: "Additional arguments for the build command"
+    required: false
+    default: ""
+
+  # Package configuration
+  run-package:
+    description: "Whether to run package"
+    required: false
+    default: "false"
+  package-command:
+    description: "Command to run for packaging"
+    required: false
+    default: "mvn package"
+  package-args:
+    description: "Additional arguments for the package command"
+    required: false
+    default: ""
+
+  # Maven configuration
+  maven-options:
+    description: "Maven options for all processes"
+    required: false
+    default: "-B -q"
+
+  # Coverage configuration
+  archive-coverage:
+    description: "Whether to archive code coverage results"
+    required: false
+    default: "false"
+  coverage-path:
+    description: "Path to the coverage reports"
+    required: false
+    default: "target/site/jacoco"
 
 # Define the runs configuration
 runs:
   using: "composite"
   steps:
-    - name: Hello step
-      id: hello
+    - name: Set Maven Options
+      shell: bash
+      run: export MAVEN_OPTS="${{ inputs.maven-options }}"
+
+    - name: Lint
+      if: inputs.run-lint == 'true'
       shell: bash
       run: |
-        echo "${{ inputs.message }}, ${{ inputs.who-to-greet }}!"
-        echo "time=$(date)" >> $GITHUB_OUTPUT
+        echo "::group::Running Lint"
+        echo "Running command: ${{ inputs.lint-command }} ${{ inputs.lint-args }}"
+        
+        # Check if pom.xml exists
+        if [ -f "pom.xml" ]; then
+          # Check if using checkstyle plugin and it's configured
+          if [[ "${{ inputs.lint-command }}" == *"checkstyle"* ]]; then
+            if grep -q "maven-checkstyle-plugin\|checkstyle-maven-plugin" pom.xml; then
+              ${{ inputs.lint-command }} ${{ inputs.lint-args }} || {
+                echo "::error::Linting failed. Please check the logs above for errors."
+                exit 1
+              }
+            else
+              echo "No checkstyle plugin configuration found in pom.xml. Skipping linting."
+            fi
+          else
+            ${{ inputs.lint-command }} ${{ inputs.lint-args }} || {
+              echo "::error::Linting failed. Please check the logs above for errors."
+              exit 1
+            }
+          fi
+        else
+          echo "No pom.xml found. Skipping linting."
+        fi
+        echo "::endgroup::"
+
+    - name: Test
+      if: inputs.run-test == 'true'
+      shell: bash
+      run: |
+        echo "::group::Running Tests"
+        echo "Running command: ${{ inputs.test-command }} ${{ inputs.test-args }}"
+        
+        # Check if pom.xml exists
+        if [ -f "pom.xml" ]; then
+          # Check if test sources exist
+          if [ -d "src/test" ] || find . -name "*Test.java" -o -name "*Tests.java" | grep -q .; then
+            ${{ inputs.test-command }} ${{ inputs.test-args }} || {
+              echo "::error::Tests failed. Please check the logs above for errors."
+              exit 1
+            }
+          else
+            echo "No test sources found. Skipping tests."
+          fi
+        else
+          echo "No pom.xml found. Skipping tests."
+        fi
+        echo "::endgroup::"
+
+    - name: Archive code coverage results
+      if: inputs.archive-coverage == 'true' && inputs.run-test == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-coverage-report
+        path: ${{ inputs.coverage-path }}
+
+    - name: Build
+      if: inputs.run-build == 'true'
+      shell: bash
+      run: |
+        echo "::group::Running Build"
+        echo "Running command: ${{ inputs.build-command }} ${{ inputs.build-args }}"
+        
+        # Check if pom.xml exists
+        if [ -f "pom.xml" ]; then
+          ${{ inputs.build-command }} ${{ inputs.build-args }} || {
+            echo "::error::Build failed. Please check the logs above for errors."
+            exit 1
+          }
+        else
+          echo "No pom.xml found. Skipping build."
+        fi
+        echo "::endgroup::"
+
+    - name: Package
+      if: inputs.run-package == 'true'
+      shell: bash
+      run: |
+        echo "::group::Running Package"
+        echo "Running command: ${{ inputs.package-command }} ${{ inputs.package-args }}"
+        
+        # Check if pom.xml exists
+        if [ -f "pom.xml" ]; then
+          ${{ inputs.package-command }} ${{ inputs.package-args }} || {
+            echo "::error::Package failed. Please check the logs above for errors."
+            exit 1
+          }
+        else
+          echo "No pom.xml found. Skipping package."
+        fi
+        echo "::endgroup::"
+
+    - name: List Built Artifacts
+      if: inputs.run-build == 'true' && success()
+      id: built-artifacts
+      shell: bash
+      run: |
+        echo "::group::Built Artifacts"
+        if [ -d "target" ]; then
+          echo "Built artifacts in target/:"
+          find target -name "*.jar" -o -name "*.war" -o -name "*.ear" 2>/dev/null | head -20 || echo "No packaged artifacts found"
+          if [ -d "target/classes" ]; then
+            echo "Compiled classes available in target/classes/"
+          fi
+        else
+          echo "No target directory found"
+        fi
+        echo "::endgroup::"
 
 # Define the branding for the action in the GitHub Marketplace
 branding:
-  icon: "award"
-  color: "blue"
+  icon: "package"
+  color: "orange"
